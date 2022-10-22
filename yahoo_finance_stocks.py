@@ -6,6 +6,8 @@
 
 import pandas as pd
 from yahoo_fin import stock_info as si
+from datetime import datetime, time
+
 
 tickers_spy    = pd.DataFrame( si.tickers_sp500())
 tickers_nasdaq = pd.DataFrame( si.tickers_nasdaq())
@@ -13,8 +15,40 @@ tickers_dow    = pd.DataFrame( si.tickers_dow())
 
 
 
+
+
 def get_data_startdate(ticker, start_date):
      return si.get_data(ticker , start_date = start_date)
+
+
+def get_cleaned_data_startdate(ticker, start_date):
+    df = get_data_startdate(ticker , start_date)
+        
+    ## GAP up or GAP down.
+    df["prev_close"] = df.close.shift(1)
+    df['chg%_premarket'] = 100*-1*df[['open','prev_close']].pct_change(axis=1)['prev_close'].round(5)
+
+    ## Cuanto movió en el dia.
+    df['chg%_intraday'] =  100*-1*((df['open'] - df['close'])/df['close']).round(5)
+
+    df.reset_index(inplace=True)
+    df.rename(columns={"index":"Date"},inplace=True)
+
+    return df
+
+
+
+def create_change_percentajes(df):
+    
+    df["prev_close"] = df.close.shift(1)
+
+    df['chg%_premarket'] = 100*-1*df[['open','prev_close']].pct_change(axis=1)['prev_close'].round(5)
+
+    ## Cuanto movió en el dia.
+    df['chg%_intraday'] =  100*-1*((df['open'] - df['close'])/df['close']).round(5)
+    
+    return df
+
 
 
 ## Get stats valuation and financials
@@ -74,6 +108,59 @@ def rename_columns_dataframe(df):
     return df
     
     
+    
+def get_earnings_history(ticker):
+    return si.get_earnings_history(ticker)
+
+
+def prepare_data_for_earnings(ticker, start_date):
+    cols_print = ['Date','chg%_premarket', 'chg%_intraday']
+
+
+    df = get_cleaned_data_startdate(ticker , start_date)[cols_print]
+        
+    ## conocer el comportamiento el dia antes, el dia del earning y dia despues.
+    df["yesterday_chg%_intraday"] = df['chg%_intraday'].shift(1)
+    df["tomorrow_chg%_intraday"] = df['chg%_intraday'].shift(-1)
+    
+    df.rename(columns={"chg%_intraday":"today_chg%_intraday"},inplace=True)
+    
+    order = ["Date","yesterday_chg%_intraday","chg%_premarket","today_chg%_intraday", "tomorrow_chg%_intraday"]
+    
+
+    return df[order]
+
+
+def get_processed_earnings_history(ticker):
+
+    start_market = time(9, 30, 0)
+    end_market = time(16, 0, 0)
+    
+
+    
+    dict_EPS = get_earnings_history(ticker)
+    df = pd.DataFrame.from_dict(dict_EPS)
+
+    df["Time_EPS"] = df['startdatetime']\
+                    .apply(lambda val: datetime.strptime(val, '%Y-%m-%dT%H:%M:%S.%f%z')\
+                    .time())
+
+    df["Date_EPS"] = df['startdatetime']\
+                    .apply(lambda val: datetime.strptime(val, '%Y-%m-%dT%H:%M:%S.%f%z')\
+                    .date())
+
+    df["Date_EPS"] = df["Date_EPS"].astype('datetime64[ns]')
+    
+    
+    df.loc[df['Time_EPS'] < start_market, 'Time Report'] = 'BMO'  ## before markets open
+    df.loc[df['Time_EPS'] > end_market , 'Time Report'] = 'AMC'  ## after markets close
+    #df.loc[(df['Time_EPS'] > start_market & df['Time_EPS'] < end_market), 'Time Report'] = 'MO'  ## markets open
+    
+    
+    return df
+
+
+
     
 def convert_currency_column(amount):
     return "${:,.0f}".format(amount)
